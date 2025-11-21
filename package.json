@@ -5,8 +5,9 @@
   "type": "module",
   "homepage": "https://balpaydin.github.io/vibe-code-banker-game",
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d build"
   },
