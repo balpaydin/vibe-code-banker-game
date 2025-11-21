@@ -29,7 +29,7 @@ const WarCard: React.FC<WarCardProps> = ({
   // Conflict of Interest Check
   const isConflictOfInterest = hasPresenceInAttacker && hasPresenceInDefender;
 
-  // Dynamic Price Calculation
+  // Dynamic Price Calculation (for visual only, logic is in App.tsx)
   const getPricePerWeapon = (strength: number) => {
      return Math.floor(20 * (1 + (100 - strength) / 100));
   };
@@ -71,11 +71,11 @@ const WarCard: React.FC<WarCardProps> = ({
           onClick={() => handleSupport(side, 'gold')}
           disabled={playerGold < amount}
           className="flex items-center justify-between bg-stone-800 hover:bg-stone-700 border border-stone-600 rounded px-2 py-1.5 transition-colors group"
-          title={`Hibe Et: ${amount} Florin`}
+          title={`Kasaya Hibe Et: ${amount} Florin`}
         >
            <div className="flex items-center gap-1.5">
               <Coins size={12} className="text-amber-600 group-hover:text-amber-500" />
-              <span className="text-[10px] font-bold text-stone-300">Hibe</span>
+              <span className="text-[10px] font-bold text-stone-300">Kasa</span>
            </div>
            <span className="text-[10px] text-red-400">-{amount}F</span>
         </button>
@@ -120,7 +120,8 @@ const WarCard: React.FC<WarCardProps> = ({
                 )}
              </div>
              <h3 className="font-bold text-stone-300 text-[10px] text-center leading-tight h-6 flex items-center">{war.attacker.name}</h3>
-             <div className="text-[9px] text-stone-500 mb-2">Güç: <span className="text-stone-300">{war.attackerStrength.toFixed(0)}</span></div>
+             <div className="text-[9px] text-stone-500 mb-0.5">Güç: <span className="text-stone-300">{war.attackerStrength.toFixed(0)}</span></div>
+             <div className="text-[9px] text-stone-500 mb-2 font-mono">{war.attackerWeapons > 1000 ? (war.attackerWeapons/1000).toFixed(1) + 'K' : war.attackerWeapons} Silah</div>
              
              {/* Action Buttons (Left) */}
              {renderActionButtons('attacker', hasPresenceInAttacker, attackerWeaponPrice)}
@@ -203,7 +204,8 @@ const WarCard: React.FC<WarCardProps> = ({
                 )}
              </div>
              <h3 className="font-bold text-stone-300 text-[10px] text-center leading-tight h-6 flex items-center">{war.defender.name}</h3>
-             <div className="text-[9px] text-stone-500 mb-2">Güç: <span className="text-stone-300">{war.defenderStrength.toFixed(0)}</span></div>
+             <div className="text-[9px] text-stone-500 mb-0.5">Güç: <span className="text-stone-300">{war.defenderStrength.toFixed(0)}</span></div>
+             <div className="text-[9px] text-stone-500 mb-2 font-mono">{war.defenderWeapons > 1000 ? (war.defenderWeapons/1000).toFixed(1) + 'K' : war.defenderWeapons} Silah</div>
 
              {/* Action Buttons (Right) */}
              {renderActionButtons('defender', hasPresenceInDefender, defenderWeaponPrice)}

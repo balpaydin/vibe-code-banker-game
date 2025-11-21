@@ -5,7 +5,7 @@ import WarCard from './components/WarCard';
 import RebellionCard from './components/RebellionCard';
 import GameLog from './components/GameLog';
 import GameMap from './components/GameMap';
-import { GameState, Kingdom, KingdomType, War, LogEntry, Workshop, AssetType, Rebellion, Loan, Competitor, Agent, LoanRequest } from './types';
+import { GameState, Kingdom, KingdomType, War, LogEntry, Workshop, AssetType, Rebellion, Loan, Competitor, Agent, LoanRequest, ResourceType, MarketItem } from './types';
 import { generateWarNarrative } from './services/geminiService';
 import { Landmark, Map as MapIcon, Table2, RotateCcw, Skull, Menu, Globe } from 'lucide-react';
 
@@ -54,6 +54,9 @@ const generateCompetitors = (count: number): Competitor[] => {
       name: names[i] || `Rakip ${i+1}`,
       color: colors[i % colors.length],
       gold: startGold,
+      weapons: 50 + Math.floor(Math.random() * 200),
+      grain: 200 + Math.floor(Math.random() * 1000),
+      medicine: 10 + Math.floor(Math.random() * 50),
       workshops: [],
       personality
     };
@@ -65,6 +68,8 @@ const INITIAL_COMPETITORS = generateCompetitors(15);
 const INITIAL_STATE: GameState = {
   gold: 5000,
   weapons: 200,
+  grain: 1000,
+  medicine: 50,
   turn: 1,
   reputation: 50,
   workshops: [],
@@ -76,12 +81,12 @@ const INITIAL_STATE: GameState = {
   agents: [],
   competitors: INITIAL_COMPETITORS,
   market: {
-    price: 35,
-    stock: 500,
-    trend: 'stable'
+    weapons: { price: 35, stock: 500, trend: 'stable' },
+    grain: { price: 5, stock: 2000, trend: 'stable' },
+    medicine: { price: 80, stock: 100, trend: 'stable' }
   },
   logs: [
-    { id: 'init', turn: 0, message: 'Bankerlik ofisinizi açtınız. Artık sadece altın ve çelik konuşur.', type: 'info' }
+    { id: 'init', turn: 0, message: 'Bankerlik ofisinizi açtınız. Altın, Çelik, Tahıl ve İlaç...', type: 'info' }
   ],
   isThinking: false,
   gameOver: false,
@@ -90,6 +95,7 @@ const INITIAL_STATE: GameState = {
 const ASSET_COSTS: Record<AssetType, number> = {
   [AssetType.FARM]: 2000,
   [AssetType.WEAPONSMITH]: 4000,
+  [AssetType.APOTHECARY]: 5500,
   [AssetType.MINE]: 7500,
   [AssetType.BANK]: 15000
 };
@@ -136,6 +142,10 @@ const App: React.FC = () => {
       round: 1,
       attackerStrength: startStrAttacker,
       defenderStrength: startStrDefender,
+      attackerWeapons: 500,
+      defenderWeapons: 500,
+      attackerGoldReserve: 1000,
+      defenderGoldReserve: 1000,
       playerSupportSide: null,
       playerInvestmentTotal: 0,
       goldSaturation: 0,
@@ -198,9 +208,11 @@ const App: React.FC = () => {
     let goldIncome = 0;
     let maintenance = 0;
 
+    // Production Rates
     switch (type) {
-      case AssetType.FARM: goldIncome = 350; maintenance = 50; break;
-      case AssetType.WEAPONSMITH: productionRate = 50; maintenance = 150; break;
+      case AssetType.FARM: productionRate = 100; goldIncome = 50; maintenance = 50; break; // Produces Grain
+      case AssetType.WEAPONSMITH: productionRate = 50; maintenance = 150; break; // Produces Weapons
+      case AssetType.APOTHECARY: productionRate = 20; maintenance = 100; break; // Produces Medicine
       case AssetType.MINE: goldIncome = 900; maintenance = 200; break;
       case AssetType.BANK: goldIncome = 0; maintenance = 500; break;
     }
@@ -345,18 +357,18 @@ const App: React.FC = () => {
 
       if (type === 'gold') {
         newGold -= amount;
-        logMessage = `Savaşa ${amount} Florin hibe edildi.`;
-        const efficiency = 5000 / (5000 + war.goldSaturation);
-        strengthImpact = (amount / 500) * efficiency;
+        logMessage = `Savaş kasasına ${amount} Florin hibe edildi.`;
+        // Gold doesn't directly increase strength anymore in this model, handled in resolveTurn
+        strengthImpact = 0; 
       } else {
         const qty = amount; 
         const strength = side === 'attacker' ? war.attackerStrength : war.defenderStrength;
-        const unitPrice = Math.floor(20 * (1 + (100 - strength) / 100));
+        const unitPrice = Math.floor(prev.market.weapons.price * 1.2); // Selling directly to war is usually premium
         const revenue = qty * unitPrice;
         
         newWeapons -= qty;
         newGold += revenue;
-        logMessage = `${qty} adet silah tanesi ${unitPrice} Florinden satıldı (+${revenue} F).`;
+        logMessage = `${qty} adet silah ${unitPrice} Florinden satıldı (+${revenue} F).`;
         strengthImpact = (qty / 50); 
       }
       
@@ -367,11 +379,17 @@ const App: React.FC = () => {
           
           let newAttStr = w.attackerStrength;
           let newDefStr = w.defenderStrength;
+          let newAttGold = w.attackerGoldReserve;
+          let newDefGold = w.defenderGoldReserve;
+          let newAttWeapons = w.attackerWeapons;
+          let newDefWeapons = w.defenderWeapons;
 
           if (side === 'attacker') {
-            newAttStr = Math.min(100, w.attackerStrength + strengthImpact);
+             if (type === 'gold') newAttGold += amount;
+             else { newAttWeapons += amount; newAttStr = Math.min(100, w.attackerStrength + strengthImpact); }
           } else {
-            newDefStr = Math.min(100, w.defenderStrength + strengthImpact);
+             if (type === 'gold') newDefGold += amount;
+             else { newDefWeapons += amount; newDefStr = Math.min(100, w.defenderStrength + strengthImpact); }
           }
 
           return { 
@@ -380,7 +398,11 @@ const App: React.FC = () => {
             playerInvestmentTotal: w.playerInvestmentTotal + investmentValue,
             goldSaturation: newSaturation,
             attackerStrength: newAttStr,
-            defenderStrength: newDefStr
+            defenderStrength: newDefStr,
+            attackerGoldReserve: newAttGold,
+            defenderGoldReserve: newDefGold,
+            attackerWeapons: newAttWeapons,
+            defenderWeapons: newDefWeapons
           };
         }
         return w;
@@ -390,30 +412,57 @@ const App: React.FC = () => {
     });
   };
 
-  const handleMarketTrade = (action: 'buy' | 'sell', amount: number) => {
+  const handleMarketTrade = (resource: ResourceType, action: 'buy' | 'sell', amount: number) => {
      setGameState(prev => {
-        const price = prev.market.price;
-        const sellPrice = Math.floor(price * 0.8);
+        const marketItem = prev.market[resource];
+        const currentPrice = marketItem.price;
+        const sellPrice = Math.floor(currentPrice * 0.8);
         
         let newGold = prev.gold;
-        let newWeapons = prev.weapons;
-        let newMarketStock = prev.market.stock;
+        let newResourceAmount = prev[resource];
+        let newMarketStock = marketItem.stock;
+        let newMarketPrice = currentPrice;
 
         if (action === 'buy') {
-           if (prev.gold < price * amount || prev.market.stock < amount) return prev;
-           newGold -= price * amount;
-           newWeapons += amount;
+           if (prev.gold < currentPrice * amount || marketItem.stock < amount) return prev;
+           newGold -= currentPrice * amount;
+           newResourceAmount += amount;
            newMarketStock -= amount;
-           addLog(`Kara Borsadan ${amount} silah alındı (-${price * amount} F).`, 'warning');
+           
+           const priceImpact = Math.ceil(amount / (resource === 'medicine' ? 5 : 25)); // Medicine is more sensitive
+           newMarketPrice += priceImpact;
+
+           addLog(`Kara Borsadan ${amount} ${resource} alındı (-${currentPrice * amount} F).`, 'warning');
         } else {
-           if (prev.weapons < amount) return prev;
+           if (newResourceAmount < amount) return prev;
            newGold += sellPrice * amount;
-           newWeapons -= amount;
+           newResourceAmount -= amount;
            newMarketStock += amount;
-           addLog(`Kara Borsaya ${amount} silah satıldı (+${sellPrice * amount} F).`, 'success');
+
+           const priceImpact = Math.ceil(amount / (resource === 'medicine' ? 5 : 25));
+           newMarketPrice -= priceImpact;
+
+           addLog(`Kara Borsaya ${amount} ${resource} satıldı (+${sellPrice * amount} F).`, 'success');
         }
 
-        return { ...prev, gold: newGold, weapons: newWeapons, market: { ...prev.market, stock: newMarketStock } };
+        // Clamp Price
+        newMarketPrice = Math.max(2, Math.min(500, newMarketPrice));
+        const trend = newMarketPrice > currentPrice ? 'up' : (newMarketPrice < currentPrice ? 'down' : 'stable');
+
+        return { 
+           ...prev, 
+           gold: newGold, 
+           [resource]: newResourceAmount, 
+           market: { 
+              ...prev.market, 
+              [resource]: {
+                 ...prev.market[resource],
+                 stock: newMarketStock,
+                 price: newMarketPrice,
+                 trend: trend
+              }
+           } 
+        };
      });
   };
 
@@ -438,15 +487,43 @@ const App: React.FC = () => {
      addLog(`${target} ${amount} Florin destek gönderildi.`, 'warning');
   };
 
-  const simulateCompetitors = (currentCompetitors: Competitor[], activeWars: War[], turn: number) => {
+  const simulateCompetitors = (currentCompetitors: Competitor[], activeWars: War[], market: Record<ResourceType, MarketItem>, turn: number) => {
     const logs: LogEntry[] = [];
     const newCompetitors = [...currentCompetitors];
     const modifiedWars = [...activeWars];
+    const updatedMarket = { ...market };
 
     newCompetitors.forEach((comp, idx) => {
       const assetIncome = comp.workshops.reduce((sum, w) => sum + w.goldIncome - w.maintenance, 0);
       const baseIncome = 500; 
       comp.gold += Math.max(0, assetIncome + baseIncome);
+
+      // AI Trading Logic (Simplistic)
+      // They buy low, sell high for all resources
+      (['weapons', 'grain', 'medicine'] as ResourceType[]).forEach(res => {
+         const item = updatedMarket[res];
+         const idealPrice = res === 'weapons' ? 35 : (res === 'grain' ? 5 : 80);
+         
+         // Buy if cheap and has gold
+         if (item.price < idealPrice && comp.gold > 2000 && item.stock > 10) {
+             const amount = res === 'grain' ? 200 : 20;
+             if (comp.gold >= item.price * amount) {
+                comp.gold -= item.price * amount;
+                comp[res] += amount;
+                item.stock -= amount;
+                item.price += 1;
+             }
+         }
+         // Sell if expensive and has stock
+         if (item.price > idealPrice * 1.5 && comp[res] > 0) {
+             const amount = Math.min(comp[res], res === 'grain' ? 200 : 20);
+             comp[res] -= amount;
+             comp.gold += (item.price * 0.8) * amount;
+             item.stock += amount;
+             item.price = Math.max(1, item.price - 1);
+         }
+      });
+
 
       if (comp.gold > 6000 && Math.random() > 0.6) {
         const targetKingdom = KINGDOMS[Math.floor(Math.random() * KINGDOMS.length)].name;
@@ -457,13 +534,23 @@ const App: React.FC = () => {
            const cost = ASSET_COSTS[chosenType];
            
            comp.gold -= cost;
+           let prodRate = 0;
+           let goldInc = 0;
+           let maint = 0;
+           
+           if (chosenType === AssetType.FARM) { prodRate = 100; goldInc = 50; maint = 50; }
+           if (chosenType === AssetType.APOTHECARY) { prodRate = 20; maint = 100; }
+           if (chosenType === AssetType.WEAPONSMITH) { prodRate = 50; maint = 150; }
+           if (chosenType === AssetType.MINE) { goldInc = 900; maint = 200; }
+           if (chosenType === AssetType.BANK) { maint = 500; }
+
            comp.workshops.push({
              id: `comp-ws-${Date.now()}-${idx}`,
              kingdomName: targetKingdom,
              type: chosenType,
-             productionRate: chosenType === AssetType.WEAPONSMITH ? 50 : 0,
-             goldIncome: chosenType === AssetType.FARM ? 350 : (chosenType === AssetType.MINE ? 900 : 0),
-             maintenance: chosenType === AssetType.WEAPONSMITH ? 150 : (chosenType === AssetType.BANK ? 500 : 100)
+             productionRate: prodRate,
+             goldIncome: goldInc,
+             maintenance: maint
            });
            logs.push({ id: `log-ai-${Date.now()}-${idx}`, turn: turn, message: `${comp.name}, ${targetKingdom}'de yeni bir ${chosenType} satın aldı.`, type: 'rival' });
         }
@@ -480,47 +567,41 @@ const App: React.FC = () => {
             if (comp.personality === 'aggressive') side = war.attackerStrength < war.defenderStrength ? 'attacker' : 'defender';
             else if (comp.personality === 'conservative') side = war.attackerStrength > war.defenderStrength ? 'attacker' : 'defender';
 
-            const action = Math.random() > 0.3 ? 'sell' : 'donate';
-            if (action === 'sell') {
-               const qty = 100;
+            // AI Sells weapons to war from their stock if they have it
+            if (comp.weapons > 50) {
+               const qty = 50;
                const strength = side === 'attacker' ? war.attackerStrength : war.defenderStrength;
-               const unitPrice = Math.floor(20 * (1 + (100 - strength) / 100));
+               const unitPrice = Math.floor(updatedMarket.weapons.price * 1.2);
                const revenue = qty * unitPrice;
+               
+               comp.weapons -= qty;
                comp.gold += revenue;
-               const impact = 2;
-               if (side === 'attacker') war.attackerStrength = Math.min(100, war.attackerStrength + impact);
-               else war.defenderStrength = Math.min(100, war.defenderStrength + impact);
+               
+               const impact = 1;
+               if (side === 'attacker') { war.attackerStrength = Math.min(100, war.attackerStrength + impact); war.attackerWeapons += qty; }
+               else { war.defenderStrength = Math.min(100, war.defenderStrength + impact); war.defenderWeapons += qty; }
 
                if (!war.competitorLog) war.competitorLog = [];
                war.competitorLog.push({ competitorName: comp.name, side, amount: revenue });
                logs.push({ id: `log-war-ai-${Date.now()}-${idx}`, turn: turn, message: `${comp.name}, ${side === 'attacker' ? war.attacker.name : war.defender.name} ordusuna silah sattı.`, type: 'rival' });
-            } else {
-               const donation = 1500;
-               comp.gold -= donation;
-               const impact = 1.5;
-               if (side === 'attacker') war.attackerStrength = Math.min(100, war.attackerStrength + impact);
-               else war.defenderStrength = Math.min(100, war.defenderStrength + impact);
-               if (!war.competitorLog) war.competitorLog = [];
-               war.competitorLog.push({ competitorName: comp.name, side, amount: donation });
-               logs.push({ id: `log-war-ai-${Date.now()}-${idx}`, turn: turn, message: `${comp.name}, ${side === 'attacker' ? war.attacker.name : war.defender.name} kralına altın hibe etti.`, type: 'rival' });
             }
          }
       });
     });
-    return { updatedCompetitors: newCompetitors, updatedWars: modifiedWars, newLogs: logs };
+    return { updatedCompetitors: newCompetitors, updatedWars: modifiedWars, newLogs: logs, updatedMarket };
   };
 
   const resolveTurn = async () => {
     setGameState(prev => ({ ...prev, isThinking: true }));
     const nextTurn = gameState.turn + 1;
     
-    // --- Updated Logic: Only defending kingdoms are blocked ---
     const siegedZones = new Set<string>();
     gameState.wars.filter(w => !w.resolved).forEach(w => {
        siegedZones.add(w.defender.name);
     });
 
     let incomeLog = "";
+    // Calculate Gold Income
     const assetIncome = gameState.workshops.reduce((sum, w) => {
        if (siegedZones.has(w.kingdomName)) return sum; 
        return sum + w.goldIncome;
@@ -532,13 +613,23 @@ const App: React.FC = () => {
     const agentCosts = gameState.agents.reduce((sum, a) => sum + a.costPerTurn, 0);
     const maintenance = gameState.workshops.reduce((sum, w) => sum + w.maintenance, 0) + agentCosts;
     
-    const producedWeapons = gameState.workshops.reduce((sum, w) => {
-       if (siegedZones.has(w.kingdomName)) return sum; // Defending workshops produce nothing
-       return sum + w.productionRate;
-    }, 0);
+    // PRODUCTION
+    let producedWeapons = 0;
+    let producedGrain = 0;
+    let producedMedicine = 0;
+
+    gameState.workshops.forEach(w => {
+        if (siegedZones.has(w.kingdomName)) return;
+        if (w.type === AssetType.WEAPONSMITH) producedWeapons += w.productionRate;
+        if (w.type === AssetType.FARM) producedGrain += w.productionRate;
+        if (w.type === AssetType.APOTHECARY) producedMedicine += w.productionRate;
+    });
 
     let currentGold = gameState.gold + assetIncome - maintenance;
     let currentWeapons = gameState.weapons + producedWeapons;
+    let currentGrain = gameState.grain + producedGrain;
+    let currentMedicine = gameState.medicine + producedMedicine;
+
     let currentWorkshops = [...gameState.workshops];
     let currentEmbargoes = gameState.embargoes.filter(e => e.untilTurn > gameState.turn);
     let currentLoans = [...gameState.loans];
@@ -553,7 +644,75 @@ const App: React.FC = () => {
     }
     if (incomeLog) currentLogs.push({ id: `inc-${Date.now()}`, turn: nextTurn, message: incomeLog, type: 'warning' });
 
-    // REBELLION GENERATION LOGIC
+    // AI & Market Simulation
+    const simulationResult = simulateCompetitors(gameState.competitors, gameState.wars, gameState.market, nextTurn);
+    currentLogs = [...currentLogs, ...simulationResult.newLogs];
+    let currentWars = simulationResult.updatedWars;
+    let currentCompetitors = simulationResult.updatedCompetitors;
+    let currentMarket = simulationResult.updatedMarket;
+
+    // --- SUPPLY & DEMAND & WAR CONSUMPTION ---
+    // 1. Global Production Flowing to Market (20% of all production goes to black market)
+    const playerWs = currentWorkshops;
+    const rivalWs = currentCompetitors.flatMap(c => c.workshops);
+    const allWorkshops = [...playerWs, ...rivalWs].filter(w => !siegedZones.has(w.kingdomName));
+    
+    const totalWeaponProd = allWorkshops.filter(w => w.type === AssetType.WEAPONSMITH).length * 50;
+    const totalGrainProd = allWorkshops.filter(w => w.type === AssetType.FARM).length * 100;
+    const totalMedProd = allWorkshops.filter(w => w.type === AssetType.APOTHECARY).length * 20;
+
+    currentMarket.weapons.stock += Math.floor(totalWeaponProd * 0.2);
+    currentMarket.grain.stock += Math.floor(totalGrainProd * 0.3);
+    currentMarket.medicine.stock += Math.floor(totalMedProd * 0.2);
+
+    // 2. War Consumption (Kingdoms buy from market with their reserve gold)
+    const activeWarCount = currentWars.filter(w => !w.resolved).length;
+    
+    if (activeWarCount > 0) {
+        // Each active war consumes resources from market
+        const weaponDemand = activeWarCount * 150;
+        const grainDemand = activeWarCount * 800; // High grain demand
+        const medDemand = activeWarCount * 40;
+
+        currentMarket.weapons.stock = Math.max(0, currentMarket.weapons.stock - weaponDemand);
+        currentMarket.grain.stock = Math.max(0, currentMarket.grain.stock - grainDemand);
+        currentMarket.medicine.stock = Math.max(0, currentMarket.medicine.stock - medDemand);
+        
+        if (currentMarket.weapons.stock < 50) currentLogs.push({ id: `dearth-w-${Date.now()}`, turn: nextTurn, message: "Silah kıtlığı! Fiyatlar artıyor.", type: 'warning' });
+        if (currentMarket.grain.stock < 200) currentLogs.push({ id: `dearth-g-${Date.now()}`, turn: nextTurn, message: "Tahıl kıtlığı! Ordular aç.", type: 'warning' });
+        if (currentMarket.medicine.stock < 20) currentLogs.push({ id: `dearth-m-${Date.now()}`, turn: nextTurn, message: "İlaç yok! Salgın riski.", type: 'danger' });
+    }
+
+    // 3. Price Adjustment
+    (['weapons', 'grain', 'medicine'] as ResourceType[]).forEach(res => {
+        const item = currentMarket[res];
+        let priceChange = 0;
+        
+        // Scarcity impact
+        if (res === 'weapons') {
+           if (item.stock < 200) priceChange += 15;
+           if (item.stock > 2000) priceChange -= 5;
+           if (activeWarCount > 0) priceChange += (activeWarCount * 5);
+        } else if (res === 'grain') {
+           if (item.stock < 1000) priceChange += 3;
+           if (item.stock > 5000) priceChange -= 1;
+           if (activeWarCount > 0) priceChange += (activeWarCount * 1);
+        } else if (res === 'medicine') {
+           if (item.stock < 50) priceChange += 25;
+           if (item.stock > 300) priceChange -= 5;
+           if (activeWarCount > 0) priceChange += (activeWarCount * 8);
+        }
+
+        // Random fluctuation
+        priceChange += (Math.random() * 4 - 2);
+        
+        const oldPrice = item.price;
+        item.price = Math.max(1, Math.floor(item.price + priceChange));
+        item.trend = item.price > oldPrice ? 'up' : (item.price < oldPrice ? 'down' : 'stable');
+    });
+
+
+    // REBELLION LOGIC
     const peacefulKingdoms = KINGDOMS.filter(k => 
        !siegedZones.has(k.name) && !currentRebellions.some(r => r.kingdom === k.name)
     );
@@ -574,16 +733,17 @@ const App: React.FC = () => {
 
     // Helper to get a random asset reward with correct stats
     const getRandomRewardAsset = (kingdom: KingdomType, idPrefix: string): Workshop => {
-        const types = [AssetType.FARM, AssetType.MINE, AssetType.WEAPONSMITH, AssetType.BANK];
+        const types = [AssetType.FARM, AssetType.MINE, AssetType.WEAPONSMITH, AssetType.BANK, AssetType.APOTHECARY];
         const type = types[Math.floor(Math.random() * types.length)];
         let goldIncome = 0;
         let productionRate = 0;
         let maint = 0;
 
         switch(type) {
-            case AssetType.FARM: goldIncome = 350; maint = 50; break;
+            case AssetType.FARM: productionRate = 100; goldIncome = 50; maint = 50; break;
             case AssetType.MINE: goldIncome = 900; maint = 200; break;
             case AssetType.WEAPONSMITH: productionRate = 50; maint = 150; break;
+            case AssetType.APOTHECARY: productionRate = 20; maint = 100; break;
             case AssetType.BANK: maint = 500; break;
         }
 
@@ -597,16 +757,15 @@ const App: React.FC = () => {
         };
     };
 
-    // REBELLION RESOLUTION LOGIC
+    // REBELLION RESOLUTION
     currentRebellions = currentRebellions.map(reb => {
        if (reb.resolved) return reb;
        
        const MAX_REBELLION_DURATION = 5;
        let newDuration = reb.duration + 1;
-       const strengthChange = (Math.random() * 20) - 10; // -10 to +10 change
+       const strengthChange = (Math.random() * 20) - 10; 
        let newStrength = Math.max(0, Math.min(100, reb.strength + strengthChange));
        
-       // Time-out Logic: If duration exceeds max, rebellion fizzles out (Crown Wins)
        if (newDuration > MAX_REBELLION_DURATION) {
           if (reb.supportSide === 'crown') {
              const reward = getRandomRewardAsset(reb.kingdom, 'crown-rew-time');
@@ -614,7 +773,7 @@ const App: React.FC = () => {
              currentLogs.push({ id: `reb-time-${reb.id}`, turn: nextTurn, message: `${reb.kingdom} isyanı zamanla etkisini yitirdi. Kraliyet yardımınız için bir ${reward.type} bahşetti.`, type: 'success' });
           } else if (reb.supportSide === 'rebels') {
              currentEmbargoes.push({ kingdom: reb.kingdom, untilTurn: nextTurn + 3 });
-             currentLogs.push({ id: `reb-time-fail-${reb.id}`, turn: nextTurn, message: `${reb.kingdom} isyanı başarısız oldu. Desteğiniz boşa gitti ve ambargo yediniz.`, type: 'danger' });
+             currentLogs.push({ id: `reb-time-fail-${reb.id}`, turn: nextTurn, message: `${reb.kingdom} isyanı başarısız oldu. Desteğiniz boşa gitti.`, type: 'danger' });
           } else {
              currentLogs.push({ id: `reb-time-neu-${reb.id}`, turn: nextTurn, message: `${reb.kingdom} isyanı zamanla dağıldı.`, type: 'info' });
           }
@@ -622,14 +781,12 @@ const App: React.FC = () => {
        }
 
        if (newStrength > 85) {
-          // Rebellion Succeeds
           const playerHadAssets = currentWorkshops.some(w => w.kingdomName === reb.kingdom);
           if (playerHadAssets) {
              currentWorkshops = currentWorkshops.filter(w => w.kingdomName !== reb.kingdom);
              currentLogs.push({ id: `reb-succ-${reb.id}`, turn: nextTurn, message: `${reb.kingdom} isyanı başarılı oldu! Hükümet düştü ve mülkleriniz yağmalandı.`, type: 'danger' });
           } else if (reb.supportSide === 'rebels') {
-             // Reward: 3 to 5 random assets
-             const rewardCount = Math.floor(Math.random() * 3) + 3; // 3, 4, or 5
+             const rewardCount = Math.floor(Math.random() * 3) + 3; 
              for(let i=0; i<rewardCount; i++) {
                  const reward = getRandomRewardAsset(reb.kingdom, `reb-rew-${i}`);
                  currentWorkshops.push(reward);
@@ -640,101 +797,45 @@ const App: React.FC = () => {
           }
           return { ...reb, resolved: true, success: true, strength: 100, duration: newDuration };
        } else if (newStrength < 15) {
-          // Rebellion Suppressed (Active Suppression)
           if (reb.supportSide === 'crown') {
              const reward = getRandomRewardAsset(reb.kingdom, 'crown-rew');
              currentWorkshops.push(reward);
-             currentLogs.push({ id: `crown-rew-msg-${reb.id}`, turn: nextTurn, message: `Kraliyet ${reb.kingdom} isyanını bastırdı ve yardımınız için size bir ${reward.type} bahşetti.`, type: 'success' });
+             currentLogs.push({ id: `crown-rew-msg-${reb.id}`, turn: nextTurn, message: `Kraliyet ${reb.kingdom} isyanını bastırdı ve ödül verdi.`, type: 'success' });
           } else if (reb.supportSide === 'rebels') {
-             // Failed support leads to embargo?
              currentEmbargoes.push({ kingdom: reb.kingdom, untilTurn: nextTurn + 3 });
-             currentLogs.push({ id: `embargo-${reb.id}`, turn: nextTurn, message: `${reb.kingdom} Kralı isyanı bastırdı ve ihanetinizi unutmadı. 3 Yıl Ambargo!`, type: 'danger' });
+             currentLogs.push({ id: `embargo-${reb.id}`, turn: nextTurn, message: `${reb.kingdom} Kralı isyanı bastırdı. Ambargo yediniz!`, type: 'danger' });
           } else {
-             currentLogs.push({ id: `reb-fail-${reb.id}`, turn: nextTurn, message: `${reb.kingdom} isyanı bastırıldı. Düzen sağlandı.`, type: 'info' });
+             currentLogs.push({ id: `reb-fail-${reb.id}`, turn: nextTurn, message: `${reb.kingdom} isyanı bastırıldı.`, type: 'info' });
           }
           return { ...reb, resolved: true, success: false, strength: 0, duration: newDuration };
        }
        return { ...reb, strength: newStrength, duration: newDuration };
     });
 
-
-    const simulationResult = simulateCompetitors(gameState.competitors, gameState.wars, nextTurn);
-    currentLogs = [...currentLogs, ...simulationResult.newLogs];
-    let currentWars = simulationResult.updatedWars;
-    let currentCompetitors = simulationResult.updatedCompetitors; 
-
-    // --- MARKET LOGIC UPDATE: Supply vs Demand ---
-    // 1. Global Production Supply (Player + Rivals)
-    // Assuming ~25% of global weapon production flows into the black market
-    const playerSmiths = currentWorkshops.filter(w => w.type === AssetType.WEAPONSMITH && !siegedZones.has(w.kingdomName)).length;
-    const rivalSmiths = currentCompetitors.reduce((acc, c) => acc + c.workshops.filter(w => w.type === AssetType.WEAPONSMITH && !siegedZones.has(w.kingdomName)).length, 0);
-    const totalProduction = (playerSmiths + rivalSmiths) * 50;
-    const marketInflow = Math.floor(totalProduction * 0.25);
-
-    // 2. War Consumption (Demand)
-    // Each warring kingdom consumes weapons every turn to sustain the effort
-    const activeWarCount = currentWars.filter(w => !w.resolved).length;
-    // Warring sides (2 per war) consume 50-100 weapons each
-    const consumptionPerKingdom = 50 + Math.floor(Math.random() * 50);
-    const totalDemand = activeWarCount * 2 * consumptionPerKingdom;
-
-    let newMarketStock = gameState.market.stock + marketInflow - totalDemand;
-    if (newMarketStock < 0) {
-       newMarketStock = 0;
-       currentLogs.push({ id: `mkt-empty-${Date.now()}`, turn: nextTurn, message: `Dünya genelinde silah kıtlığı! Krallıklar karaborsayı kuruttu.`, type: 'danger' });
-    }
-
-    // 3. Price Calculation
-    let newMarketPrice = 35;
-    newMarketPrice += (activeWarCount * 12); // War increases demand/price base
-    
-    // Scarcity Multiplier
-    if (newMarketStock < 200) newMarketPrice += 40;
-    if (newMarketStock < 50) newMarketPrice += 60;
-    if (newMarketStock > 2000) newMarketPrice = Math.max(10, newMarketPrice - 15); // Surplus reduces price
-    
-    newMarketPrice = Math.floor(newMarketPrice + (Math.random() * 10 - 5));
-    const trend = newMarketPrice > gameState.market.price ? 'up' : (newMarketPrice < gameState.market.price ? 'down' : 'stable');
-
-    const activeLoanCount = currentLoans.filter(l => l.status === 'active' || l.status === 'defaulted').length;
-    const riskPremium = activeLoanCount * 0.05;
-    
-    // LOAN REQUEST GENERATION (UPDATED: Only if Bank exists, 1-3 requests, Tiered amounts)
     const bankLocations = currentWorkshops.filter(w => w.type === AssetType.BANK).map(w => w.kingdomName);
     const uniqueBankLocations = [...new Set(bankLocations)];
 
     if (uniqueBankLocations.length > 0) {
-       const numRequests = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3 requests
-       
+       const numRequests = Math.floor(Math.random() * 3) + 1;
        for (let i = 0; i < numRequests; i++) {
           const kingdom = uniqueBankLocations[Math.floor(Math.random() * uniqueBankLocations.length)];
-          
           const tierRoll = Math.random();
           let amount = 0;
           let borrowerTitle = "";
-
-          if (tierRoll < 0.5) { // Low Tier (50%)
-             amount = 500 + Math.floor(Math.random() * 1500); // 500 - 2000
-             borrowerTitle = `Esnaf ${Math.floor(Math.random() * 100)}`;
-          } else if (tierRoll < 0.8) { // Mid Tier (30%)
-             amount = 2000 + Math.floor(Math.random() * 5500); // 2000 - 7500
-             borrowerTitle = `Lonca Başı ${Math.floor(Math.random() * 100)}`;
-          } else { // High Tier (20%)
-             amount = 7500 + Math.floor(Math.random() * 12500); // 7500 - 20000
-             borrowerTitle = `Kont ${Math.floor(Math.random() * 100)}`;
-          }
+          if (tierRoll < 0.5) { amount = 500 + Math.floor(Math.random() * 1500); borrowerTitle = `Esnaf ${Math.floor(Math.random() * 100)}`; } 
+          else if (tierRoll < 0.8) { amount = 2000 + Math.floor(Math.random() * 5500); borrowerTitle = `Lonca Başı ${Math.floor(Math.random() * 100)}`; } 
+          else { amount = 7500 + Math.floor(Math.random() * 12500); borrowerTitle = `Kont ${Math.floor(Math.random() * 100)}`; }
 
           currentLoanRequests.push({
              id: `req-${Date.now()}-${i}`,
              kingdom,
              borrowerName: borrowerTitle,
              amount: amount,
-             offeredInterest: 0.2 + riskPremium + (Math.random() * 0.1),
+             offeredInterest: 0.2 + (Math.random() * 0.1),
              duration: 3,
              expiresIn: 2
           });
        }
-       currentLogs.push({ id: `loan-req-${Date.now()}`, turn: nextTurn, message: `Bankalarımıza ${numRequests} yeni kredi başvurusu geldi.`, type: 'info' });
     }
 
     currentLoanRequests = currentLoanRequests.map(r => ({...r, expiresIn: r.expiresIn - 1})).filter(r => r.expiresIn > 0);
@@ -746,10 +847,10 @@ const App: React.FC = () => {
           if (Math.random() > defaultChance) {
              currentLoans[i] = { ...loan, status: 'paid' };
              currentGold += loan.totalDue;
-             currentLogs.push({ id: `pay-${loan.id}`, turn: nextTurn, message: `${loan.borrowerName} borcunu faiziyle ödedi (+${loan.totalDue} F).`, type: 'success' });
+             currentLogs.push({ id: `pay-${loan.id}`, turn: nextTurn, message: `${loan.borrowerName} borcunu ödedi (+${loan.totalDue} F).`, type: 'success' });
           } else {
              currentLoans[i] = { ...loan, status: 'defaulted' };
-             currentLogs.push({ id: `def-${loan.id}`, turn: nextTurn, message: `${loan.borrowerName} borcunu ödemedi! Adamlarını gönder.`, type: 'danger' });
+             currentLogs.push({ id: `def-${loan.id}`, turn: nextTurn, message: `${loan.borrowerName} borcunu ödemedi!`, type: 'danger' });
           }
        }
     }
@@ -758,8 +859,43 @@ const App: React.FC = () => {
 
     for (const war of currentWars) {
       if (war.resolved) { updatedWars.push(war); continue; }
-      let newAttStr = Math.min(100, Math.max(0, war.attackerStrength + (Math.random() * 10 - 5)));
-      let newDefStr = Math.min(100, Math.max(0, war.defenderStrength + (Math.random() * 10 - 5)));
+      
+      // War Progression based on Weapon Stockpiles
+      // If attacker has more weapons, they gain advantage
+      let attAdvantage = 0;
+      let defAdvantage = 0;
+      
+      // Kingdoms attempt to buy weapons from market using reserves
+      if (war.attackerGoldReserve >= currentMarket.weapons.price) {
+          const canBuy = Math.floor(war.attackerGoldReserve / currentMarket.weapons.price);
+          const actualBuy = Math.min(canBuy, currentMarket.weapons.stock, 200); // Cap per turn
+          if (actualBuy > 0) {
+              war.attackerGoldReserve -= actualBuy * currentMarket.weapons.price;
+              war.attackerWeapons += actualBuy;
+              currentMarket.weapons.stock -= actualBuy;
+          }
+      }
+      if (war.defenderGoldReserve >= currentMarket.weapons.price) {
+          const canBuy = Math.floor(war.defenderGoldReserve / currentMarket.weapons.price);
+          const actualBuy = Math.min(canBuy, currentMarket.weapons.stock, 200);
+          if (actualBuy > 0) {
+              war.defenderGoldReserve -= actualBuy * currentMarket.weapons.price;
+              war.defenderWeapons += actualBuy;
+              currentMarket.weapons.stock -= actualBuy;
+          }
+      }
+
+      // Simple battle logic
+      if (war.attackerWeapons > war.defenderWeapons) attAdvantage = 5 + Math.random() * 5;
+      else if (war.defenderWeapons > war.attackerWeapons) defAdvantage = 5 + Math.random() * 5;
+
+      let newAttStr = Math.min(100, Math.max(0, war.attackerStrength + attAdvantage - (Math.random() * 3)));
+      let newDefStr = Math.min(100, Math.max(0, war.defenderStrength + defAdvantage - (Math.random() * 3)));
+      
+      // Weapons are consumed in battle
+      war.attackerWeapons = Math.max(0, Math.floor(war.attackerWeapons * 0.9));
+      war.defenderWeapons = Math.max(0, Math.floor(war.defenderWeapons * 0.9));
+
       let newRound = war.round + 1;
       let isResolved = false;
       let winner: Kingdom | null = null;
@@ -772,58 +908,28 @@ const App: React.FC = () => {
 
       if (isResolved && winner) {
          const isAttackerWinner = winner.id === war.attacker.id;
-         const isPlayerWinner = (war.playerSupportSide === 'attacker' && isAttackerWinner) || (war.playerSupportSide === 'defender' && !isAttackerWinner);
          const loser = isAttackerWinner ? war.defender : war.attacker;
-
-         // Logic: Assets in DEFEATED DEFENDING kingdom are destroyed.
-         // BUT: If player has assets in BOTH attacker and defender, they are immune.
          
          const hasAssetsInAttacker = currentWorkshops.some(w => w.kingdomName === war.attacker.name);
          const hasAssetsInDefender = currentWorkshops.some(w => w.kingdomName === war.defender.name);
          const isImmune = hasAssetsInAttacker && hasAssetsInDefender;
 
-         if (!isAttackerWinner) {
-             // Defender WON (Attacker lost).
-             // Usually no assets are destroyed in the attacking kingdom unless we want to add that rule.
-             // For now, let's keep it as: Defeat in defense = destruction. Defeat in offense = shame.
-             // So if Attacker loses, nothing happens to assets in Attacker kingdom.
-         } else {
-             // Attacker WON (Defender lost).
-             // Assets in Defender kingdom are destroyed unless immune.
-             if (!isImmune) {
-                const lostAssets = currentWorkshops.filter(w => w.kingdomName === loser.name);
-                if (lostAssets.length > 0) {
-                   currentWorkshops = currentWorkshops.filter(w => w.kingdomName !== loser.name);
-                   currentLogs.push({ id: `loss-${war.id}`, turn: nextTurn, message: `${loser.name} düştü! ${lostAssets.length} mülkünüz yağmalandı.`, type: 'danger' });
-                }
-                
-                // Competitors also lose assets
-                currentCompetitors.forEach((comp, cIdx) => {
-                   const compLost = comp.workshops.filter(w => w.kingdomName === loser.name);
-                   if (compLost.length > 0) {
-                      comp.workshops = comp.workshops.filter(w => w.kingdomName !== loser.name);
-                      currentLogs.push({ id: `comp-loss-${Date.now()}-${cIdx}`, turn: nextTurn, message: `${comp.name}, ${loser.name} savaşında mülklerini kaybetti.`, type: 'rival' });
-                   }
-                });
-             } else {
-                currentLogs.push({ id: `immune-${war.id}`, turn: nextTurn, message: `Diplomatik Dokunulmazlık: ${loser.name} düşse de iki taraftaki yatırımlarınız sizi korudu.`, type: 'success' });
+         if (isAttackerWinner && !isImmune) {
+             const lostAssets = currentWorkshops.filter(w => w.kingdomName === loser.name);
+             if (lostAssets.length > 0) {
+                currentWorkshops = currentWorkshops.filter(w => w.kingdomName !== loser.name);
+                currentLogs.push({ id: `loss-${war.id}`, turn: nextTurn, message: `${loser.name} düştü! mülkleriniz yağmalandı.`, type: 'danger' });
              }
+             currentCompetitors.forEach(c => {
+                c.workshops = c.workshops.filter(w => w.kingdomName !== loser.name);
+             });
          }
 
-         // Reward for winning offensive support
          if (isAttackerWinner && war.playerSupportSide === 'attacker') {
-            const rewardType = Math.random() > 0.5 ? AssetType.FARM : AssetType.MINE;
-            currentWorkshops.push({ id: `war-rew-${Date.now()}`, kingdomName: loser.name, type: rewardType, productionRate: 0, goldIncome: rewardType === AssetType.FARM ? 350 : 900, maintenance: 50 });
-            currentLogs.push({ id: `win-loot-${war.id}`, turn: nextTurn, message: `${winner.name} ile gelen zafer! İşgal edilen topraklarda bir ${rewardType} ele geçirdiniz.`, type: 'success' });
+            const reward = getRandomRewardAsset(loser.name, 'war-win-rew');
+            currentWorkshops.push(reward);
+            currentLogs.push({ id: `win-loot-${war.id}`, turn: nextTurn, message: `${winner.name} zaferiyle bir ${reward.type} ele geçirdiniz.`, type: 'success' });
          }
-
-         // Narrative
-         generateWarNarrative(war.attacker, war.defender, winner, war.playerInvestmentTotal, war.playerSupportSide === 'attacker' || war.playerSupportSide === 'defender' ? 'gold' : null)
-           .then(text => {
-              // Narrative logic placeholder
-           });
-         
-         currentLogs.push({ id: `end-${war.id}`, turn: nextTurn, message: `${winner.name}, ${loser.name} karşısında kesin zafer kazandı.`, type: 'info' });
 
          updatedWars.push({ ...war, round: newRound, attackerStrength: newAttStr, defenderStrength: newDefStr, resolved: true, winnerId: winner.id });
       } else {
@@ -831,16 +937,10 @@ const App: React.FC = () => {
       }
     }
 
-    const warsStarting = Math.max(0, 2 - updatedWars.filter(w => !w.resolved).length); // Max 2 wars
-    const maxNewWars = Math.min(warsStarting, 1); // Add max 1 per turn if space exists
-    
-    // Only spawn new war if random check passes
-    // 0 existing wars: 15% chance
-    // 1 existing war: 5% chance
+    const warsStarting = Math.max(0, 2 - updatedWars.filter(w => !w.resolved).length);
+    const maxNewWars = Math.min(warsStarting, 1); 
     const currentWarCount = updatedWars.filter(w => !w.resolved).length;
-    let spawnChance = 0;
-    if (currentWarCount === 0) spawnChance = 0.15;
-    else if (currentWarCount === 1) spawnChance = 0.05;
+    let spawnChance = currentWarCount === 0 ? 0.15 : 0.05;
 
     if (maxNewWars > 0 && Math.random() < spawnChance) {
        const newWar = createWar(nextTurn, KINGDOMS);
@@ -855,6 +955,8 @@ const App: React.FC = () => {
       turn: nextTurn,
       gold: currentGold,
       weapons: currentWeapons,
+      grain: currentGrain,
+      medicine: currentMedicine,
       workshops: currentWorkshops,
       embargoes: currentEmbargoes,
       loans: currentLoans,
@@ -862,14 +964,13 @@ const App: React.FC = () => {
       agents: currentAgents,
       competitors: currentCompetitors,
       rebellions: currentRebellions,
-      market: { ...prev.market, stock: newMarketStock, price: newMarketPrice, trend },
+      market: currentMarket,
       wars: updatedWars,
       logs: currentLogs,
       isThinking: false
     }));
   };
 
-  // Filter wars relevant to the player (has assets or previous support)
   const relevantWars = gameState.wars.filter(w => {
      if (w.resolved) return false;
      const hasInAttacker = gameState.workshops.some(ws => ws.kingdomName === w.attacker.name);
@@ -882,65 +983,44 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen w-screen bg-stone-950 text-stone-200 overflow-hidden flex flex-col relative">
-      {/* Background Gradient */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-stone-900 via-stone-950 to-black -z-10"></div>
 
-      {/* Game Over Modal */}
       {gameState.gameOver && (
          <div className="absolute inset-0 z-50 bg-black/90 flex items-center justify-center backdrop-blur-sm">
             <div className="bg-stone-900 border-2 border-red-900 p-8 rounded-lg text-center max-w-md shadow-[0_0_50px_rgba(220,38,38,0.3)]">
                <Skull size={64} className="mx-auto text-red-600 mb-4" />
                <h1 className="text-4xl medieval-font text-red-500 mb-2">İFLAS ETTİNİZ</h1>
-               <p className="text-stone-400 mb-6">Hazeniz tükendi. Krallar artık size güvenmiyor ve alacaklılar kapınızda.</p>
+               <p className="text-stone-400 mb-6">Hazeniz tükendi.</p>
                <button onClick={handleReset} className="bg-red-900 hover:bg-red-800 text-stone-100 py-3 px-6 rounded border border-red-700 font-bold flex items-center justify-center gap-2 mx-auto transition-all">
-                  <RotateCcw size={20} />
-                  Yeniden Başlat
+                  <RotateCcw size={20} /> Yeniden Başlat
                </button>
             </div>
          </div>
       )}
 
-      {/* Header */}
       <div className="h-14 bg-stone-950 border-b border-stone-800 flex items-center justify-between px-4 z-30 shrink-0 shadow-md">
         <div className="flex items-center gap-3">
            <div className="bg-amber-900/20 p-2 rounded-full border border-amber-900/50"><Landmark className="text-amber-500" /></div>
            <h1 className="text-xl medieval-font text-amber-500 hidden md:block">Ortaçağ Bankeri</h1>
         </div>
-        
         <div className="flex items-center gap-2 bg-stone-900 p-1 rounded-lg border border-stone-800">
-          <button 
-            onClick={() => setViewMode('table')}
-            className={`p-2 rounded flex items-center gap-2 text-xs font-bold uppercase transition-colors ${viewMode === 'table' ? 'bg-stone-800 text-amber-500 shadow-sm' : 'text-stone-500 hover:text-stone-300'}`}
-          >
-            <Table2 size={16} /> <span className="hidden sm:inline">Savaş Masası</span>
-          </button>
+          <button onClick={() => setViewMode('table')} className={`p-2 rounded flex items-center gap-2 text-xs font-bold uppercase transition-colors ${viewMode === 'table' ? 'bg-stone-800 text-amber-500 shadow-sm' : 'text-stone-500 hover:text-stone-300'}`}><Table2 size={16} /> <span className="hidden sm:inline">Savaş Masası</span></button>
           <div className="w-px h-4 bg-stone-800"></div>
-          <button 
-            onClick={() => setViewMode('map')}
-            className={`p-2 rounded flex items-center gap-2 text-xs font-bold uppercase transition-colors ${viewMode === 'map' ? 'bg-stone-800 text-amber-500 shadow-sm' : 'text-stone-500 hover:text-stone-300'}`}
-          >
-            <MapIcon size={16} /> <span className="hidden sm:inline">Dünya Haritası</span>
-          </button>
+          <button onClick={() => setViewMode('map')} className={`p-2 rounded flex items-center gap-2 text-xs font-bold uppercase transition-colors ${viewMode === 'map' ? 'bg-stone-800 text-amber-500 shadow-sm' : 'text-stone-500 hover:text-stone-300'}`}><MapIcon size={16} /> <span className="hidden sm:inline">Dünya Haritası</span></button>
         </div>
-
         <div className="flex items-center gap-2">
           <button onClick={handleReset} className="p-2 text-stone-500 hover:text-red-400 transition-colors" title="Oyunu Sıfırla"><RotateCcw size={18} /></button>
-          {/* Mobile Menu Toggle */}
           <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 text-stone-400"><Menu size={24} /></button>
         </div>
       </div>
 
-      {/* Main Layout */}
       <div className="flex-1 flex overflow-hidden relative">
-        
-        {/* Left Panel: Portfolio (Desktop: Always Visible, Mobile: Modal) */}
-        <div className={`
-           fixed inset-0 z-40 md:static md:z-0 md:w-80 md:block transition-transform duration-300
-           ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-        `}>
+        <div className={`fixed inset-0 z-40 md:static md:z-0 md:w-80 md:block transition-transform duration-300 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
            <Portfolio 
               gold={gameState.gold} 
               weapons={gameState.weapons}
+              grain={gameState.grain}
+              medicine={gameState.medicine}
               reputation={gameState.reputation}
               workshops={gameState.workshops}
               embargoes={gameState.embargoes}
@@ -965,24 +1045,13 @@ const App: React.FC = () => {
            />
         </div>
 
-        {/* Center: Game View */}
         <div className="flex-1 bg-stone-950 relative overflow-hidden flex flex-col">
-           
-           {/* Map View */}
            <div className={`absolute inset-0 transition-opacity duration-500 ${viewMode === 'map' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-              <GameMap 
-                 kingdoms={KINGDOMS} 
-                 wars={gameState.wars} 
-                 workshops={gameState.workshops}
-                 competitors={gameState.competitors}
-                 onSelectKingdom={(id) => console.log(id)} 
-              />
+              <GameMap kingdoms={KINGDOMS} wars={gameState.wars} workshops={gameState.workshops} competitors={gameState.competitors} onSelectKingdom={(id) => console.log(id)} />
            </div>
 
-           {/* Table View (War Room) */}
            <div className={`absolute inset-0 flex flex-col transition-opacity duration-500 ${viewMode === 'table' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
               <div className="flex-1 p-4 overflow-y-auto">
-                 
                  {relevantWars.length === 0 && gameState.rebellions.filter(r => !r.resolved).length === 0 && (
                     <div className="h-full flex flex-col items-center justify-center text-stone-600 opacity-50">
                        <Globe size={64} className="mb-4" />
@@ -993,56 +1062,26 @@ const App: React.FC = () => {
                  )}
 
                  <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {/* Rebellions */}
                     {gameState.rebellions.filter(r => !r.resolved).map(reb => {
                        const hasAsset = gameState.workshops.some(w => w.kingdomName === reb.kingdom);
                        return (
-                          <div key={reb.id} className="h-64">
-                             <RebellionCard 
-                                rebellion={reb} 
-                                hasAsset={hasAsset} 
-                                playerGold={gameState.gold} 
-                                onSupport={handleRebellionSupport} 
-                             />
-                          </div>
+                          <div key={reb.id} className="h-64"><RebellionCard rebellion={reb} hasAsset={hasAsset} playerGold={gameState.gold} onSupport={handleRebellionSupport} /></div>
                        );
                     })}
-
-                    {/* Wars */}
                     {relevantWars.map(war => {
                        const hasPresenceInAttacker = gameState.workshops.some(w => w.kingdomName === war.attacker.name);
                        const hasPresenceInDefender = gameState.workshops.some(w => w.kingdomName === war.defender.name);
                        return (
-                          <div key={war.id} className="h-64">
-                             <WarCard 
-                                war={war}
-                                playerGold={gameState.gold}
-                                playerWeapons={gameState.weapons}
-                                hasPresenceInAttacker={hasPresenceInAttacker}
-                                hasPresenceInDefender={hasPresenceInDefender}
-                                onSupport={handleWarSupport}
-                             />
-                          </div>
+                          <div key={war.id} className="h-64"><WarCard war={war} playerGold={gameState.gold} playerWeapons={gameState.weapons} hasPresenceInAttacker={hasPresenceInAttacker} hasPresenceInDefender={hasPresenceInDefender} onSupport={handleWarSupport} /></div>
                        );
                     })}
                  </div>
-
-                 {/* Footer Info for Hidden Wars */}
                  {otherWarsCount > 0 && relevantWars.length > 0 && (
-                    <div className="mt-8 text-center">
-                       <div className="inline-block bg-stone-900/50 px-4 py-2 rounded-full border border-stone-800 text-stone-500 text-xs">
-                          <Globe size={12} className="inline mr-2" />
-                          Dünyanın geri kalanında {otherWarsCount} adet yerel savaş daha sürüyor (Yatırımınız yok).
-                       </div>
-                    </div>
+                    <div className="mt-8 text-center"><div className="inline-block bg-stone-900/50 px-4 py-2 rounded-full border border-stone-800 text-stone-500 text-xs"><Globe size={12} className="inline mr-2" /> Dünyanın geri kalanında {otherWarsCount} adet yerel savaş daha sürüyor (Yatırımınız yok).</div></div>
                  )}
-
               </div>
-              
-              {/* Log Panel */}
               <GameLog logs={gameState.logs} />
            </div>
-
         </div>
       </div>
     </div>

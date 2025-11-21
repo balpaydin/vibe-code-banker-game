@@ -1,11 +1,13 @@
 
 import React, { useState } from 'react';
-import { Workshop, KingdomType, AssetType, Embargo, Loan, Competitor, MarketState, Agent, LoanRequest } from '../types';
-import { Coins, Building2, Hammer, Plus, Anvil, Wheat, Pickaxe, Landmark, Ban, Handshake, Skull, ShieldCheck, Users, TrendingUp, Store, ArrowUpRight, ArrowDownRight, Minus, UserPlus, Sword, XCircle, CheckCircle, DollarSign, X } from 'lucide-react';
+import { Workshop, KingdomType, AssetType, Embargo, Loan, Competitor, Agent, LoanRequest, ResourceType, MarketItem } from '../types';
+import { Coins, Building2, Hammer, Plus, Anvil, Wheat, Pickaxe, Landmark, Ban, Handshake, Skull, ShieldCheck, Users, TrendingUp, Store, ArrowUpRight, ArrowDownRight, Minus, UserPlus, Sword, XCircle, CheckCircle, DollarSign, X, FlaskRound } from 'lucide-react';
 
 interface PortfolioProps {
   gold: number;
   weapons: number;
+  grain: number;
+  medicine: number;
   reputation: number;
   workshops: Workshop[];
   embargoes: Embargo[];
@@ -13,7 +15,7 @@ interface PortfolioProps {
   loanRequests: LoanRequest[];
   agents: Agent[];
   competitors: Competitor[];
-  market: MarketState;
+  market: Record<ResourceType, MarketItem>;
   wars: any[];
   turn: number;
   onEndTurn: () => void;
@@ -24,21 +26,24 @@ interface PortfolioProps {
   onAcceptLoan: (requestId: string) => void;
   onRejectLoan: (requestId: string) => void;
   onCollectDebt: (loanId: string, agentId: string) => void;
-  onMarketTrade: (action: 'buy' | 'sell', amount: number) => void;
+  onMarketTrade: (resource: ResourceType, action: 'buy' | 'sell', amount: number) => void;
   isThinking: boolean;
-  onClose?: () => void; // New prop for mobile
+  onClose?: () => void; 
 }
 
 const ASSET_COSTS: Record<AssetType, number> = {
   [AssetType.FARM]: 2000,
   [AssetType.WEAPONSMITH]: 4000,
+  [AssetType.APOTHECARY]: 5500,
   [AssetType.MINE]: 7500,
   [AssetType.BANK]: 15000
 };
 
 const Portfolio: React.FC<PortfolioProps> = ({ 
   gold, 
-  weapons, 
+  weapons,
+  grain,
+  medicine, 
   workshops, 
   embargoes,
   loans,
@@ -92,6 +97,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
       case AssetType.FARM: return <Wheat size={size} />;
       case AssetType.MINE: return <Pickaxe size={size} />;
       case AssetType.WEAPONSMITH: return <Anvil size={size} />;
+      case AssetType.APOTHECARY: return <FlaskRound size={size} />;
       case AssetType.BANK: return <Landmark size={size} />;
     }
   };
@@ -101,7 +107,6 @@ const Portfolio: React.FC<PortfolioProps> = ({
   };
 
   const activeLoans = loans.filter(l => l.status !== 'paid' && l.status !== 'collected' && l.status !== 'lost');
-  const sellPrice = Math.floor(market.price * 0.8);
 
   return (
     <div className="bg-stone-900 border-r border-stone-700 w-full h-full flex flex-col overflow-hidden z-20 shadow-2xl">
@@ -114,15 +119,25 @@ const Portfolio: React.FC<PortfolioProps> = ({
         )}
         <h2 className="text-2xl medieval-font text-amber-500 mb-4">Banker'in Masası</h2>
         
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div className="bg-stone-900/50 p-2 rounded border border-stone-700">
-             <span className="text-stone-400 flex items-center gap-2 text-xs uppercase mb-1"><Coins size={14} /> Hazine</span>
-             <span className="text-lg font-bold text-amber-300">{gold.toLocaleString()}</span>
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <div className="bg-stone-900/50 p-1.5 rounded border border-stone-700">
+             <span className="text-stone-400 flex items-center gap-1 text-[10px] uppercase mb-1"><Coins size={12} /> Hazine</span>
+             <span className="text-sm font-bold text-amber-300">{gold.toLocaleString()}</span>
           </div>
           
-          <div className="bg-stone-900/50 p-2 rounded border border-stone-700">
-             <span className="text-stone-400 flex items-center gap-2 text-xs uppercase mb-1"><Hammer size={14} /> Silah Stoğu</span>
-             <span className="text-lg font-bold text-stone-300">{weapons.toLocaleString()}</span>
+          <div className="bg-stone-900/50 p-1.5 rounded border border-stone-700">
+             <span className="text-stone-400 flex items-center gap-1 text-[10px] uppercase mb-1"><Hammer size={12} /> Silah</span>
+             <span className="text-sm font-bold text-stone-300">{weapons.toLocaleString()}</span>
+          </div>
+
+          <div className="bg-stone-900/50 p-1.5 rounded border border-stone-700">
+             <span className="text-stone-400 flex items-center gap-1 text-[10px] uppercase mb-1"><Wheat size={12} /> Tahıl</span>
+             <span className="text-sm font-bold text-yellow-200">{grain.toLocaleString()}</span>
+          </div>
+
+          <div className="bg-stone-900/50 p-1.5 rounded border border-stone-700">
+             <span className="text-stone-400 flex items-center gap-1 text-[10px] uppercase mb-1"><FlaskRound size={12} /> İlaç</span>
+             <span className="text-sm font-bold text-blue-200">{medicine.toLocaleString()}</span>
           </div>
         </div>
 
@@ -143,7 +158,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
         <button
           onClick={() => {
             onEndTurn();
-            if (onClose) onClose(); // Close menu on mobile after playing turn
+            if (onClose) onClose(); 
           }}
           disabled={isThinking}
           className={`mt-6 w-full py-3 px-4 rounded border border-amber-700 font-bold uppercase tracking-wider transition-all
@@ -164,7 +179,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
         <button onClick={() => setActiveTab('rivals')} className={`flex-1 py-2 text-[10px] font-bold uppercase tracking-wider ${activeTab === 'rivals' ? 'text-amber-500 border-b-2 border-amber-500 bg-stone-800' : 'text-stone-500 hover:text-stone-300'}`}>Rakipler</button>
       </div>
 
-      {/* Actions & Assets */}
+      {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6 relative">
         
         {activeTab === 'assets' && (
@@ -299,27 +314,63 @@ const Portfolio: React.FC<PortfolioProps> = ({
 
         {activeTab === 'market' && (
           <div className="space-y-4">
-             <div className="bg-stone-800 p-4 rounded border border-stone-600">
-                <div className="flex justify-between items-center mb-4 border-b border-stone-700 pb-2">
-                  <h3 className="text-sm font-bold uppercase text-amber-500 flex items-center gap-2"><Anvil size={16} /> Kara Borsa Silahları</h3>
-                  {market.trend === 'up' && <ArrowUpRight className="text-green-500" />}{market.trend === 'down' && <ArrowDownRight className="text-red-500" />}{market.trend === 'stable' && <Minus className="text-stone-500" />}
-                </div>
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                   <div className="text-center bg-stone-900 p-2 rounded"><div className="text-stone-400 text-[10px] uppercase mb-1">Birim Fiyat</div><div className="text-xl font-bold text-amber-300">{market.price} F</div></div>
-                   <div className="text-center bg-stone-900 p-2 rounded"><div className="text-stone-400 text-[10px] uppercase mb-1">Mevcut Stok</div><div className="text-xl font-bold text-stone-300">{market.stock}</div></div>
-                </div>
-                <div className="bg-stone-900/50 p-3 rounded border border-stone-700">
-                   <h4 className="text-xs font-bold text-stone-300 mb-3">Alım / Satım Emri</h4>
-                   <div className="flex items-center justify-between mb-3 bg-stone-950 p-2 rounded">
-                      <span className="text-xs text-stone-400">Miktar:</span>
-                      <div className="flex items-center gap-2"><button onClick={() => setTradeAmount(Math.max(10, tradeAmount - 10))} className="p-1 bg-stone-800 hover:bg-stone-700 rounded text-stone-300">-</button><span className="w-12 text-center text-sm font-bold">{tradeAmount}</span><button onClick={() => setTradeAmount(tradeAmount + 10)} className="p-1 bg-stone-800 hover:bg-stone-700 rounded text-stone-300">+</button></div>
+             <h3 className="text-sm font-bold uppercase text-stone-400 flex items-center gap-2"><Store size={16} /> Kara Borsa Emtiaları</h3>
+             
+             {/* Resource List */}
+             {(['weapons', 'grain', 'medicine'] as ResourceType[]).map(res => {
+                const item = market[res];
+                const sellPrice = Math.floor(item.price * 0.8);
+                let icon = <Hammer size={16} className="text-stone-400" />;
+                let name = "Silah";
+                let color = "text-stone-300";
+                let playerStock = weapons;
+
+                if (res === 'grain') { icon = <Wheat size={16} className="text-yellow-600" />; name = "Tahıl"; color = "text-yellow-200"; playerStock = grain; }
+                if (res === 'medicine') { icon = <FlaskRound size={16} className="text-blue-500" />; name = "İlaç"; color = "text-blue-200"; playerStock = medicine; }
+
+                return (
+                   <div key={res} className="bg-stone-800 p-3 rounded border border-stone-600">
+                      <div className="flex justify-between items-center mb-3 border-b border-stone-700 pb-2">
+                         <div className="flex items-center gap-2 font-bold text-sm">
+                            {icon} <span className="text-stone-300 uppercase">{name}</span>
+                         </div>
+                         <div className="flex items-center gap-1">
+                            {item.trend === 'up' && <ArrowUpRight size={14} className="text-green-500" />}
+                            {item.trend === 'down' && <ArrowDownRight size={14} className="text-red-500" />}
+                            {item.trend === 'stable' && <Minus size={14} className="text-stone-500" />}
+                            <span className="text-amber-400 font-mono">{item.price} F</span>
+                         </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2 mb-3 text-[10px]">
+                         <div className="bg-stone-900 p-1.5 rounded text-center">
+                            <div className="text-stone-500 uppercase">Pazar Stoğu</div>
+                            <div className="font-bold text-stone-300">{item.stock}</div>
+                         </div>
+                         <div className="bg-stone-900 p-1.5 rounded text-center">
+                            <div className="text-stone-500 uppercase">Senin Stoğun</div>
+                            <div className={`font-bold ${color}`}>{playerStock}</div>
+                         </div>
+                      </div>
+
+                      <div className="bg-stone-900/50 p-2 rounded border border-stone-700">
+                        <div className="flex items-center justify-between mb-2">
+                           <button onClick={() => setTradeAmount(Math.max(10, tradeAmount - 10))} className="p-1 bg-stone-800 hover:bg-stone-700 rounded text-stone-300 w-6">-</button>
+                           <span className="text-xs font-bold text-stone-300">{tradeAmount} Adet</span>
+                           <button onClick={() => setTradeAmount(tradeAmount + 10)} className="p-1 bg-stone-800 hover:bg-stone-700 rounded text-stone-300 w-6">+</button>
+                        </div>
+                        <div className="flex gap-2">
+                           <button onClick={() => onMarketTrade(res, 'buy', tradeAmount)} disabled={gold < (item.price * tradeAmount) || item.stock < tradeAmount} className="flex-1 py-1.5 bg-stone-800 hover:bg-stone-700 border border-stone-600 rounded disabled:opacity-30 flex items-center justify-center gap-1 text-[10px]">
+                              <span className="text-stone-200">AL</span> <span className="text-red-400">-{item.price * tradeAmount}</span>
+                           </button>
+                           <button onClick={() => onMarketTrade(res, 'sell', tradeAmount)} disabled={playerStock < tradeAmount} className="flex-1 py-1.5 bg-stone-800 hover:bg-stone-700 border border-stone-600 rounded disabled:opacity-30 flex items-center justify-center gap-1 text-[10px]">
+                              <span className="text-stone-200">SAT</span> <span className="text-green-400">+{sellPrice * tradeAmount}</span>
+                           </button>
+                        </div>
+                      </div>
                    </div>
-                   <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => onMarketTrade('buy', tradeAmount)} disabled={gold < (market.price * tradeAmount) || market.stock < tradeAmount} className="flex flex-col items-center justify-center p-2 bg-stone-800 hover:bg-stone-700 border border-stone-600 rounded disabled:opacity-30 disabled:grayscale"><span className="text-xs font-bold text-stone-200">SATIN AL</span><span className="text-[10px] text-red-400">-{market.price * tradeAmount} F</span></button>
-                      <button onClick={() => onMarketTrade('sell', tradeAmount)} disabled={weapons < tradeAmount} className="flex flex-col items-center justify-center p-2 bg-stone-800 hover:bg-stone-700 border border-stone-600 rounded disabled:opacity-30 disabled:grayscale"><span className="text-xs font-bold text-stone-200">SAT</span><span className="text-[10px] text-green-400">+{sellPrice * tradeAmount} F</span></button>
-                   </div>
-                </div>
-             </div>
+                );
+             })}
           </div>
         )}
 
